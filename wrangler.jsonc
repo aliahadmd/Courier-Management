@@ -21,6 +21,12 @@
 			"database_name": "COURIER_DB",
 			"database_id": "<YOUR_D1_DATABASE_ID>",
 			"migrations_dir": "db/migrations"
+		},
+		{
+			"binding": "COURIER_DB",
+			"database_name": "COURIER_DB",
+			"database_id": "2d337841-8b49-4b2a-a7ea-fb6be0e1b262",
+			"remote": true
 		}
 	],
 	"r2_buckets": [
