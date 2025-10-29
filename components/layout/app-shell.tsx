@@ -6,6 +6,8 @@ import { Bell, LogOut, Radio } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { OnboardingModal } from "@/components/dashboard/onboarding/onboarding-modal";
+import { useOnboardingTour } from "@/hooks/useOnboardingTour";
 import type { Role } from "@/lib/types";
 
 const roleCopy: Record<Role, string> = {
@@ -22,6 +24,8 @@ interface AppShellProps {
 }
 
 export function AppShell({ role, displayName, onSignOut, children }: AppShellProps) {
+  const { isOpen, step, setStep, dismiss, skip } = useOnboardingTour(role);
+
   return (
     <TooltipProvider delayDuration={200}>
       <div className="flex min-h-screen flex-col bg-muted/20">
@@ -62,6 +66,14 @@ export function AppShell({ role, displayName, onSignOut, children }: AppShellPro
         </header>
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">{children}</main>
       </div>
+      <OnboardingModal
+        role={role}
+        open={isOpen}
+        step={step}
+        setStep={setStep}
+        onDismiss={dismiss}
+        onSkip={skip}
+      />
     </TooltipProvider>
   );
 }
