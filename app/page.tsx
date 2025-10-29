@@ -1,103 +1,192 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+import { LoginPanel } from "@/components/auth/login-panel";
+import { AdminDashboard } from "@/components/dashboard/admin/admin-dashboard";
+import { CourierDashboard } from "@/components/dashboard/courier/courier-dashboard";
+import { CustomerDashboard } from "@/components/dashboard/customer/customer-dashboard";
+import { AppShell } from "@/components/layout/app-shell";
+import {
+  COURIER_LEADERBOARD,
+  COURIERS,
+  CUSTOMERS,
+  DELIVERY_TRENDS,
+  PERFORMANCE_SUMMARY,
+  RECENT_EVENTS,
+  REGION_PERFORMANCE,
+  ROLE_CREDENTIALS,
+  SHIPMENTS,
+} from "@/lib/mock-data";
+import {
+  calculateDashboardMetrics,
+  getCourierAssignments,
+  getCustomerShipments,
+} from "@/lib/metrics";
+import type { Role, RoleCredentials } from "@/lib/types";
+
+interface SessionState {
+  role: Role;
+  displayName: string;
+  contextId?: string;
+}
+
+const REFRESH_INTERVAL_MS = 45_000;
+const SESSION_STORAGE_KEY = "courier-dashboard-session";
+
+function formatRelative(date: Date) {
+  const diffSeconds = Math.round((Date.now() - date.getTime()) / 1000);
+  if (diffSeconds < 10) return "just now";
+  if (diffSeconds < 60) return `${diffSeconds} sec ago`;
+  if (diffSeconds < 3600) return `${Math.floor(diffSeconds / 60)} min ago`;
+  if (diffSeconds < 86400) return `${Math.floor(diffSeconds / 3600)} hr ago`;
+  return date.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [session, setSession] = useState<SessionState | null>(null);
+  const [error, setError] = useState<string | undefined>();
+  const [lastUpdated, setLastUpdated] = useState<Date>(() => new Date());
+  const [isHydrated, setIsHydrated] = useState(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+  useEffect(() => {
+    const interval = setInterval(() => setLastUpdated(new Date()), REFRESH_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(SESSION_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Partial<SessionState>;
+        if (parsed?.role && parsed?.displayName) {
+          setSession({
+            role: parsed.role,
+            displayName: parsed.displayName,
+            contextId: parsed.contextId,
+          });
+          setLastUpdated(new Date());
+        }
+      }
+    } catch (error) {
+      console.warn("Failed to restore session:", error);
+    } finally {
+      setIsHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+
+    try {
+      if (session) {
+        window.localStorage.setItem(
+          SESSION_STORAGE_KEY,
+          JSON.stringify({
+            role: session.role,
+            displayName: session.displayName,
+            contextId: session.contextId,
+          })
+        );
+      } else {
+        window.localStorage.removeItem(SESSION_STORAGE_KEY);
+      }
+    } catch (error) {
+      console.warn("Failed to persist session:", error);
+    }
+  }, [session, isHydrated]);
+
+  const dashboardMetrics = useMemo(
+    () => calculateDashboardMetrics(SHIPMENTS, COURIERS),
+    []
+  );
+
+  const lastUpdatedLabel = useMemo(() => formatRelative(lastUpdated), [lastUpdated]);
+
+  function handleLogin(credentials: { username: string; password: string }) {
+    const match = ROLE_CREDENTIALS.find(
+      (item) =>
+        item.username.toLowerCase() === credentials.username.toLowerCase().trim() &&
+        item.password === credentials.password.trim()
+    ) as RoleCredentials | undefined;
+
+    if (!match) {
+      setError("Incorrect username or password.");
+      return;
+    }
+
+    setSession({
+      role: match.role,
+      displayName: match.displayName,
+      contextId: match.contextId,
+    });
+    setError(undefined);
+    setLastUpdated(new Date());
+  }
+
+  function handleSignOut() {
+    setSession(null);
+  }
+
+  if (!isHydrated) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-12 text-sm text-muted-foreground">
+        Preparing courier workspace…
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-muted/30 px-4 py-12">
+        <LoginPanel onLogin={handleLogin} error={error} />
+      </div>
+    );
+  }
+
+  return (
+    <AppShell role={session.role} displayName={session.displayName} onSignOut={handleSignOut}>
+      {session.role === "admin" && (
+        <AdminDashboard
+          shipments={SHIPMENTS}
+          couriers={COURIERS}
+          customers={CUSTOMERS}
+          metrics={dashboardMetrics}
+          performance={PERFORMANCE_SUMMARY}
+          trend={DELIVERY_TRENDS}
+          leaderboard={COURIER_LEADERBOARD}
+          regionPerformance={REGION_PERFORMANCE}
+          events={RECENT_EVENTS}
+          lastUpdatedLabel={lastUpdatedLabel}
+          role={session.role}
+        />
+      )}
+
+      {session.role === "courier" && (
+        <CourierDashboard
+          courier={
+            COURIERS.find((courier) => courier.id === session.contextId) ?? COURIERS[0]
+          }
+          shipments={getCourierAssignments(
+            session.contextId ?? COURIERS[0].id,
+            SHIPMENTS
+          )}
+          events={RECENT_EVENTS}
+        />
+      )}
+
+      {session.role === "customer" && (
+        <CustomerDashboard
+          customer={
+            CUSTOMERS.find((customer) => customer.id === session.contextId) ?? CUSTOMERS[0]
+          }
+          shipments={getCustomerShipments(session.contextId ?? CUSTOMERS[0].id, SHIPMENTS)}
+          supportLine="+1 (800) 555-1212"
+        />
+      )}
+    </AppShell>
   );
 }
