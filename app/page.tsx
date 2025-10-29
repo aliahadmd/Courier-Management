@@ -1,29 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { LoginPanel } from "@/components/auth/login-panel";
 import { AdminDashboard } from "@/components/dashboard/admin/admin-dashboard";
 import { CourierDashboard } from "@/components/dashboard/courier/courier-dashboard";
 import { CustomerDashboard } from "@/components/dashboard/customer/customer-dashboard";
 import { AppShell } from "@/components/layout/app-shell";
-import {
-  COURIER_LEADERBOARD,
-  COURIERS,
-  CUSTOMERS,
-  DELIVERY_TRENDS,
-  PERFORMANCE_SUMMARY,
-  RECENT_EVENTS,
-  REGION_PERFORMANCE,
-  ROLE_CREDENTIALS,
-  SHIPMENTS,
-} from "@/lib/mock-data";
-import {
-  calculateDashboardMetrics,
-  getCourierAssignments,
-  getCustomerShipments,
-} from "@/lib/metrics";
-import type { Role, RoleCredentials } from "@/lib/types";
+import { getCourierAssignments, getCustomerShipments } from "@/lib/metrics";
+import { ROLE_CREDENTIALS } from "@/lib/demo-auth";
+import type { DashboardSnapshot, Role, RoleCredentials } from "@/lib/types";
 
 interface SessionState {
   role: Role;
@@ -51,6 +37,10 @@ export default function Home() {
   const [error, setError] = useState<string | undefined>();
   const [lastUpdated, setLastUpdated] = useState<Date>(() => new Date());
   const [isHydrated, setIsHydrated] = useState(false);
+  const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     const interval = setInterval(() => setLastUpdated(new Date()), REFRESH_INTERVAL_MS);
@@ -99,10 +89,64 @@ export default function Home() {
     }
   }, [session, isHydrated]);
 
-  const dashboardMetrics = useMemo(
-    () => calculateDashboardMetrics(SHIPMENTS, COURIERS),
-    []
-  );
+  const fetchSnapshot = useCallback(async () => {
+    setSnapshotLoading(true);
+    try {
+      const response = await fetch("/api/dashboard", { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`Failed to load dashboard (${response.status})`);
+      }
+      const data = (await response.json()) as DashboardSnapshot;
+      setSnapshot(data);
+      setLastUpdated(new Date(data.generatedAt));
+      setSnapshotError(null);
+    } catch (err) {
+      console.error(err);
+      setSnapshotError("Unable to load live data. Please try again.");
+    } finally {
+      setSnapshotLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!session) {
+      setSnapshot(null);
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+      return;
+    }
+
+    fetchSnapshot();
+  }, [session, fetchSnapshot]);
+
+  useEffect(() => {
+    if (!session || typeof window === "undefined") return;
+
+    const eventSource = new EventSource("/api/updates");
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as DashboardSnapshot;
+        setSnapshot(data);
+        setLastUpdated(new Date(data.generatedAt));
+        setSnapshotError(null);
+      } catch (err) {
+        console.error("Failed to parse event payload", err);
+      }
+    };
+    eventSource.onerror = (err) => {
+      console.warn("SSE connection dropped", err);
+      eventSource.close();
+      eventSourceRef.current = null;
+    };
+    eventSourceRef.current = eventSource;
+
+    return () => {
+      eventSource.close();
+      eventSourceRef.current = null;
+    };
+  }, [session]);
 
   const lastUpdatedLabel = useMemo(() => formatRelative(lastUpdated), [lastUpdated]);
 
@@ -131,6 +175,10 @@ export default function Home() {
     setSession(null);
   }
 
+  const handleRefresh = useCallback(async () => {
+    await fetchSnapshot();
+  }, [fetchSnapshot]);
+
   if (!isHydrated) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-12 text-sm text-muted-foreground">
@@ -147,44 +195,84 @@ export default function Home() {
     );
   }
 
+  if (snapshotLoading && !snapshot) {
+    return (
+      <AppShell role={session.role} displayName={session.displayName} onSignOut={handleSignOut}>
+        <div className="flex min-h-[60vh] items-center justify-center text-sm text-muted-foreground">
+          Syncing live data…
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (!snapshot) {
+    return (
+      <AppShell role={session.role} displayName={session.displayName} onSignOut={handleSignOut}>
+        <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center">
+          <p className="text-sm text-muted-foreground">
+            {snapshotError ??
+              "We couldn't load your dashboard data yet. Refresh or retry shortly."}
+          </p>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:bg-primary/90"
+          >
+            Retry
+          </button>
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell role={session.role} displayName={session.displayName} onSignOut={handleSignOut}>
       {session.role === "admin" && (
         <AdminDashboard
-          shipments={SHIPMENTS}
-          couriers={COURIERS}
-          customers={CUSTOMERS}
-          metrics={dashboardMetrics}
-          performance={PERFORMANCE_SUMMARY}
-          trend={DELIVERY_TRENDS}
-          leaderboard={COURIER_LEADERBOARD}
-          regionPerformance={REGION_PERFORMANCE}
-          events={RECENT_EVENTS}
+          shipments={snapshot.shipments}
+          couriers={snapshot.couriers}
+          customers={snapshot.customers}
+          metrics={snapshot.metrics}
+          performance={snapshot.performance}
+          trend={snapshot.trend}
+          leaderboard={snapshot.leaderboard}
+          regionPerformance={snapshot.regionPerformance}
+          events={snapshot.recentEvents}
           lastUpdatedLabel={lastUpdatedLabel}
           role={session.role}
+          onRefresh={handleRefresh}
+          slaPolicies={snapshot.slaPolicies}
+          dispatchRules={snapshot.dispatchRules}
         />
       )}
 
       {session.role === "courier" && (
         <CourierDashboard
           courier={
-            COURIERS.find((courier) => courier.id === session.contextId) ?? COURIERS[0]
+            snapshot.couriers.find((courier) => courier.id === session.contextId) ??
+            snapshot.couriers[0]
           }
           shipments={getCourierAssignments(
-            session.contextId ?? COURIERS[0].id,
-            SHIPMENTS
+            session.contextId ?? snapshot.couriers[0]?.id ?? "",
+            snapshot.shipments
           )}
-          events={RECENT_EVENTS}
+          events={snapshot.recentEvents}
+          onRefresh={handleRefresh}
         />
       )}
 
       {session.role === "customer" && (
         <CustomerDashboard
           customer={
-            CUSTOMERS.find((customer) => customer.id === session.contextId) ?? CUSTOMERS[0]
+            snapshot.customers.find((customer) => customer.id === session.contextId) ??
+            snapshot.customers[0]
           }
-          shipments={getCustomerShipments(session.contextId ?? CUSTOMERS[0].id, SHIPMENTS)}
+          shipments={getCustomerShipments(
+            session.contextId ?? snapshot.customers[0]?.id ?? "",
+            snapshot.shipments
+          )}
           supportLine="+1 (800) 555-1212"
+          onRefresh={handleRefresh}
         />
       )}
     </AppShell>

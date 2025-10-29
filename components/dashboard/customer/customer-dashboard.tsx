@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState, useTransition } from "react";
 import { CalendarClock, MapPinned, Package, PhoneCall } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -19,6 +20,7 @@ interface CustomerDashboardProps {
   customer: Customer;
   shipments: Shipment[];
   supportLine: string;
+  onRefresh?: () => void | Promise<void>;
 }
 
 const statusBadgeVariant: Record<Shipment["status"], "warning" | "info" | "success" | "destructive"> = {
@@ -38,22 +40,44 @@ function formatDateTime(iso?: string) {
   });
 }
 
-export function CustomerDashboard({ customer, shipments, supportLine }: CustomerDashboardProps) {
+export function CustomerDashboard({
+  customer,
+  shipments,
+  supportLine,
+  onRefresh,
+}: CustomerDashboardProps) {
   const [activeShipmentId, setActiveShipmentId] = useState(
     shipments.find((shipment) => shipment.status !== "delivered")?.id ?? shipments[0]?.id ?? ""
   );
+  const [message, setMessage] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
 
   const activeShipment = shipments.find((shipment) => shipment.id === activeShipmentId);
 
-  const groupedShipments = useMemo(() => {
-    return {
-      active: shipments.filter(
-        (shipment) => shipment.status === "pending" || shipment.status === "in_transit"
-      ),
-      delivered: shipments.filter((shipment) => shipment.status === "delivered"),
-      delayed: shipments.filter((shipment) => shipment.status === "delayed"),
-    };
-  }, [shipments]);
+  const confirmDelivered = (shipmentId: string) => {
+    startTransition(() => {
+      fetch(`/api/shipments/${shipmentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "delivered" }),
+      })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`Unable to confirm delivery (${response.status})`);
+          }
+          return onRefresh?.();
+        })
+        .then(() => {
+          setMessage("Thanks! Delivery confirmed and courier notified.");
+        })
+        .catch((error: unknown) => {
+          console.error(error);
+          setMessage(
+            error instanceof Error ? error.message : "Could not confirm delivery right now."
+          );
+        });
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -120,6 +144,11 @@ export function CustomerDashboard({ customer, shipments, supportLine }: Customer
           </p>
         </CardHeader>
         <CardContent>
+          {message ? (
+            <p className="mb-3 rounded-md border border-dashed border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              {message}
+            </p>
+          ) : null}
           <Tabs
             value={activeShipmentId}
             onValueChange={(value) => setActiveShipmentId(value)}
@@ -204,6 +233,24 @@ export function CustomerDashboard({ customer, shipments, supportLine }: Customer
                     ))}
                   </ol>
                 </div>
+                <div className="mt-4 flex justify-end">
+                  <Button asChild size="sm" variant="outline">
+                    <a href={`/receipt/${activeShipment.trackingId}`} target="_blank" rel="noreferrer">
+                      View delivery receipt
+                    </a>
+                  </Button>
+                </div>
+                {activeShipment.status !== "delivered" ? (
+                  <div className="mt-4 flex items-center justify-end">
+                    <Button
+                      size="sm"
+                      disabled={isPending}
+                      onClick={() => confirmDelivered(activeShipment.id)}
+                    >
+                      Confirm delivery
+                    </Button>
+                  </div>
+                ) : null}
               </TabsContent>
             ) : (
               <p className="text-sm text-muted-foreground">Select a shipment to view details.</p>

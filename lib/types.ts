@@ -65,6 +65,9 @@ export interface Shipment {
   destination: string;
   timeline: ShipmentTimelineEntry[];
   route: (GeoPoint & { label?: string })[];
+  proofAssetKey?: string | null;
+  slaPolicyId?: string | null;
+  proofs?: ProofAsset[];
 }
 
 export interface PerformanceSummary {
@@ -93,6 +96,21 @@ export interface CourierLeaderboardEntry {
   satisfaction: number;
 }
 
+export interface RegionPerformanceEntry {
+  region: string;
+  deliveries: number;
+  successRate: number;
+  averageEtaVarianceMinutes: number;
+}
+
+export interface ActivityEvent {
+  id: string;
+  timestamp: string;
+  title: string;
+  description: string;
+  type: "status" | "handoff" | "alert";
+}
+
 export interface RoleCredentials {
   username: string;
   password: string;
@@ -100,3 +118,48 @@ export interface RoleCredentials {
   displayName: string;
   contextId?: string;
 }
+
+export interface DashboardSnapshot {
+  generatedAt: string;
+  metrics: DashboardMetrics;
+  couriers: Courier[];
+  customers: Customer[];
+  shipments: Shipment[];
+  performance: PerformanceSummary[];
+  trend: TrendPoint[];
+  leaderboard: CourierLeaderboardEntry[];
+  regionPerformance: RegionPerformanceEntry[];
+  recentEvents: ActivityEvent[];
+  slaPolicies: SLAPolicy[];
+  dispatchRules: DispatchRule[];
+}
+
+export interface SLAPolicy {
+  id: string;
+  name: string;
+  region: string | null;
+  serviceLevel: Shipment["serviceLevel"];
+  targetMinutes: number;
+  cutoffHour: number;
+  createdAt: string;
+}
+
+export interface DispatchRule {
+  id: string;
+  region: string | null;
+  vehicleType: string | null;
+  maxActiveShipments: number;
+  enableAutoAssign: boolean;
+  priority: number;
+  createdAt: string;
+}
+
+export interface ProofAsset {
+  id: string;
+  shipmentId: string;
+  assetKey: string;
+  kind: "photo" | "signature" | "document";
+  uploadedBy?: string | null;
+  uploadedAt: string;
+}
+import type { DashboardMetrics } from "./metrics";

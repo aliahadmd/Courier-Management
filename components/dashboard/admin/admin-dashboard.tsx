@@ -18,13 +18,17 @@ import { CourierPerformance } from "@/components/dashboard/admin/courier-perform
 import { AnalyticsPanels } from "@/components/dashboard/admin/analytics-panels";
 import { ActivityTimeline } from "@/components/dashboard/admin/activity-timeline";
 import { CustomerOverview } from "@/components/dashboard/admin/customer-overview";
+import { DispatchOperationsPanel } from "@/components/dashboard/admin/dispatch-operations";
 import type {
   Courier,
   Customer,
   CourierLeaderboardEntry,
+  DispatchRule,
   PerformanceSummary,
+  RegionPerformanceEntry,
   Role,
   Shipment,
+  SLAPolicy,
   TrendPoint,
 } from "@/lib/types";
 import type { DashboardMetrics } from "@/lib/metrics";
@@ -37,12 +41,7 @@ interface AdminDashboardProps {
   performance: PerformanceSummary[];
   trend: TrendPoint[];
   leaderboard: CourierLeaderboardEntry[];
-  regionPerformance: {
-    region: string;
-    deliveries: number;
-    successRate: number;
-    averageEtaVarianceMinutes: number;
-  }[];
+  regionPerformance: RegionPerformanceEntry[];
   events: {
     id: string;
     timestamp: string;
@@ -52,6 +51,9 @@ interface AdminDashboardProps {
   }[];
   lastUpdatedLabel: string;
   role: Role;
+  onRefresh?: () => void | Promise<void>;
+  slaPolicies: SLAPolicy[];
+  dispatchRules: DispatchRule[];
 }
 
 export function AdminDashboard({
@@ -66,6 +68,9 @@ export function AdminDashboard({
   events,
   lastUpdatedLabel,
   role,
+  onRefresh,
+  slaPolicies,
+  dispatchRules,
 }: AdminDashboardProps) {
   const [activeTab, setActiveTab] = useState("overview");
 
@@ -111,6 +116,7 @@ export function AdminDashboard({
         <TabsTrigger value="couriers">Couriers</TabsTrigger>
         <TabsTrigger value="customers">Customers</TabsTrigger>
         <TabsTrigger value="analytics">Analytics</TabsTrigger>
+        <TabsTrigger value="operations">Operations</TabsTrigger>
       </TabsList>
 
       <TabsContent value="overview" className="space-y-4">
@@ -122,7 +128,12 @@ export function AdminDashboard({
       </TabsContent>
 
       <TabsContent value="shipments">
-        <ShipmentsTable shipments={shipments} couriers={couriers} customers={customers} />
+        <ShipmentsTable
+          shipments={shipments}
+          couriers={couriers}
+          customers={customers}
+          onRefresh={onRefresh}
+        />
       </TabsContent>
 
       <TabsContent value="couriers">
@@ -139,6 +150,15 @@ export function AdminDashboard({
           trend={trend}
           leaderboard={leaderboard}
           regionPerformance={regionPerformance}
+        />
+      </TabsContent>
+
+      <TabsContent value="operations">
+        <DispatchOperationsPanel
+          slaPolicies={slaPolicies}
+          dispatchRules={dispatchRules}
+          couriers={couriers}
+          onRefresh={onRefresh}
         />
       </TabsContent>
     </Tabs>

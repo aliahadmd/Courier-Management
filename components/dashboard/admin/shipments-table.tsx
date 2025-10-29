@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { Search, Truck } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +23,7 @@ interface ShipmentsTableProps {
   shipments: Shipment[];
   couriers: Courier[];
   customers: Customer[];
+  onRefresh?: () => void | Promise<void>;
 }
 
 const statusBadgeVariant: Record<Shipment["status"], "info" | "warning" | "success" | "destructive"> = {
@@ -39,11 +40,18 @@ const statusCopy: Record<Shipment["status"], string> = {
   delayed: "Delayed",
 };
 
-export function ShipmentsTable({ shipments, couriers, customers }: ShipmentsTableProps) {
+export function ShipmentsTable({
+  shipments,
+  couriers,
+  customers,
+  onRefresh,
+}: ShipmentsTableProps) {
   const [status, setStatus] = useState<StatusFilter>("all");
   const [region, setRegion] = useState<string>("all");
   const [courierId, setCourierId] = useState<string>("all");
   const [search, setSearch] = useState("");
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
 
   const filteredShipments = useMemo(() => {
     return shipments.filter((shipment) => {
@@ -66,6 +74,60 @@ export function ShipmentsTable({ shipments, couriers, customers }: ShipmentsTabl
   }, [shipments, status, region, courierId, search]);
 
   const uniqueRegions = Array.from(new Set(shipments.map((shipment) => shipment.region)));
+  const statusOptions: Array<{ value: Shipment["status"]; label: string }> = [
+    { value: "pending", label: "Pending" },
+    { value: "in_transit", label: "In transit" },
+    { value: "delivered", label: "Delivered" },
+    { value: "delayed", label: "Delayed" },
+  ];
+
+  const mutateShipment = (
+    shipmentId: string,
+    payload: Record<string, unknown>,
+    message: string
+  ) => {
+    startTransition(() => {
+      fetch(`/api/shipments/${shipmentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`Request failed (${response.status})`);
+          }
+          return onRefresh?.();
+        })
+        .then(() => {
+          setActionMessage(message);
+        })
+        .catch((error: unknown) => {
+          console.error(error);
+          setActionMessage(
+            error instanceof Error ? error.message : "Unable to update shipment right now."
+          );
+        });
+    });
+  };
+
+  const handleCourierChange = (shipmentId: string, newCourierId: string) => {
+    mutateShipment(
+      shipmentId,
+      { courierId: newCourierId || null },
+      newCourierId ? "Courier reassigned successfully." : "Courier unassigned."
+    );
+  };
+
+  const handleStatusChange = (shipmentId: string, newStatus: Shipment["status"]) => {
+    const messages: Record<Shipment["status"], string> = {
+      pending: "Shipment reset to pending.",
+      in_transit: "Shipment is now in transit.",
+      delayed: "Shipment flagged as delayed. Dispatch notified.",
+      delivered: "Shipment marked delivered. Await proof upload if required.",
+    };
+
+    mutateShipment(shipmentId, { status: newStatus }, messages[newStatus]);
+  };
 
   return (
     <Card>
@@ -81,6 +143,11 @@ export function ShipmentsTable({ shipments, couriers, customers }: ShipmentsTabl
         </div>
         <TooltipProvider>
           <div className="flex flex-wrap items-center gap-2">
+            {actionMessage ? (
+              <span className="rounded-md border border-dashed border-border/60 bg-muted/50 px-3 py-1 text-xs text-muted-foreground">
+                {actionMessage}
+              </span>
+            ) : null}
             <Tooltip>
               <TooltipTrigger asChild>
                 <select
@@ -153,6 +220,7 @@ export function ShipmentsTable({ shipments, couriers, customers }: ShipmentsTabl
               <TableHead>Customer</TableHead>
               <TableHead>Route</TableHead>
               <TableHead className="text-right">Last Update</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -211,6 +279,42 @@ export function ShipmentsTable({ shipments, couriers, customers }: ShipmentsTabl
                       hour: "2-digit",
                       minute: "2-digit",
                     })}
+                  </TableCell>
+                  <TableCell className="text-right text-xs text-muted-foreground">
+                    <div className="flex flex-col items-end gap-2">
+                      <select
+                        defaultValue={shipment.courierId || ""}
+                        onChange={(event) =>
+                          handleCourierChange(shipment.id, event.target.value || "")
+                        }
+                        disabled={isPending}
+                        className="h-8 w-40 rounded-md border border-input bg-background px-2 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <option value="">Unassigned</option>
+                        {couriers.map((option) => (
+                          <option key={option.id} value={option.id}>
+                            {option.name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={shipment.status}
+                        onChange={(event) =>
+                          handleStatusChange(
+                            shipment.id,
+                            event.target.value as Shipment["status"]
+                          )
+                        }
+                        disabled={isPending}
+                        className="h-8 w-40 rounded-md border border-input bg-background px-2 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {statusOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </TableCell>
                 </TableRow>
               );

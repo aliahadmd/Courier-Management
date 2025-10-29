@@ -15,6 +15,20 @@
 		"binding": "ASSETS",
 		"directory": ".open-next/assets"
 	},
+	"d1_databases": [
+		{
+			"binding": "COURIER_DB",
+			"database_name": "COURIER_DB",
+			"database_id": "<YOUR_D1_DATABASE_ID>",
+			"migrations_dir": "db/migrations"
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "PROOF_BUCKET",
+			"bucket_name": "courier-proof-assets"
+		}
+	],
 	"observability": {
 		"enabled": true
 	}

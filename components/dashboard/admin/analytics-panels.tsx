@@ -31,6 +31,7 @@ import {
 import type {
   CourierLeaderboardEntry,
   PerformanceSummary,
+  RegionPerformanceEntry,
   TrendPoint,
 } from "@/lib/types";
 
@@ -38,12 +39,7 @@ interface AnalyticsPanelsProps {
   performance: PerformanceSummary[];
   trend: TrendPoint[];
   leaderboard: CourierLeaderboardEntry[];
-  regionPerformance: {
-    region: string;
-    deliveries: number;
-    successRate: number;
-    averageEtaVarianceMinutes: number;
-  }[];
+  regionPerformance: RegionPerformanceEntry[];
 }
 
 function DeliveryTrendChart({ data }: { data: TrendPoint[] }) {

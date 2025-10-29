@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useTransition } from "react";
 import {
   ArrowRight,
   BadgeCheck,
@@ -34,6 +34,7 @@ interface CourierDashboardProps {
     description: string;
     type: "status" | "handoff" | "alert";
   }[];
+  onRefresh?: () => void | Promise<void>;
 }
 
 const statusLabels: Record<Shipment["status"], string> = {
@@ -50,7 +51,12 @@ const statusProgress: Record<Shipment["status"], number> = {
   delayed: 40,
 };
 
-export function CourierDashboard({ courier, shipments, events }: CourierDashboardProps) {
+export function CourierDashboard({
+  courier,
+  shipments,
+  events,
+  onRefresh,
+}: CourierDashboardProps) {
   const assignments = useMemo(
     () =>
       shipments
@@ -60,6 +66,78 @@ export function CourierDashboard({ courier, shipments, events }: CourierDashboar
   );
 
   const activeAssignments = assignments.filter((shipment) => shipment.status !== "delivered");
+  const [message, setMessage] = useState<string | null>(null);
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  const updateStatus = (shipmentId: string, status: Shipment["status"]) => {
+    startTransition(() => {
+      fetch(`/api/shipments/${shipmentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`Unable to update status (${response.status})`);
+          }
+          return onRefresh?.();
+        })
+        .then(() => {
+          const messages: Record<Shipment["status"], string> = {
+            pending: "Shipment reset. Dispatch will confirm new pickup.",
+            in_transit: "Marked as picked up. Keep the handheld updated.",
+            delayed: "Delay escalated. Ops team notified.",
+            delivered: "Nice work! Proof upload when available.",
+          };
+          setMessage(messages[status]);
+        })
+        .catch((error: unknown) => {
+          console.error(error);
+          setMessage(
+            error instanceof Error ? error.message : "Could not update shipment, try again."
+          );
+        });
+    });
+  };
+
+  const [proofKind, setProofKind] = useState<"photo" | "signature" | "document">("photo");
+
+  const uploadProof = (shipmentId: string, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploadingId(shipmentId);
+
+    const uploads = Array.from(files).map((file) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("kind", proofKind);
+      formData.append("uploadedBy", "courier");
+
+      return fetch(`/api/shipments/${shipmentId}/proof`, {
+        method: "POST",
+        body: formData,
+      }).then((response) => {
+        if (!response.ok) {
+          throw new Error(`Upload failed (${response.status})`);
+        }
+      });
+    });
+
+    Promise.allSettled(uploads)
+      .then(() => onRefresh?.())
+      .then(() => {
+        setMessage("Proof uploaded successfully.");
+      })
+      .catch((error: unknown) => {
+        console.error(error);
+        setMessage(
+          error instanceof Error ? error.message : "Unable to upload proof at the moment."
+        );
+      })
+      .finally(() => {
+        setUploadingId(null);
+      });
+  };
 
   return (
     <div className="space-y-6">
@@ -117,24 +195,47 @@ export function CourierDashboard({ courier, shipments, events }: CourierDashboar
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
+            {message ? (
+              <p className="rounded-md border border-dashed border-border/70 bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                {message}
+              </p>
+            ) : null}
             <div className="text-sm text-muted-foreground">
               {activeAssignments[0]
                 ? `${activeAssignments[0].destination} · ETA ${activeAssignments[0].etaMinutes} min`
                 : "No pending deliveries"}
             </div>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="sm" variant="outline" className="w-full justify-between">
-                    Update status
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  Mock flow: mark parcels picked up or delivered as you progress.
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            {activeAssignments[0] ? (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-2"
+                  disabled={isPending}
+                  onClick={() => updateStatus(activeAssignments[0].id, "in_transit")}
+                >
+                  Mark picked up
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-2"
+                  disabled={isPending}
+                  onClick={() => updateStatus(activeAssignments[0].id, "delayed")}
+                >
+                  Flag delay
+                </Button>
+                <Button
+                  size="sm"
+                  className="gap-2"
+                  disabled={isPending}
+                  onClick={() => updateStatus(activeAssignments[0].id, "delivered")}
+                >
+                  Complete stop
+                </Button>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       </div>
@@ -236,6 +337,80 @@ export function CourierDashboard({ courier, shipments, events }: CourierDashboar
                     </ul>
                   </div>
                 </div>
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={isPending}
+                    onClick={() => updateStatus(shipment.id, "in_transit")}
+                  >
+                    Mark picked up
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={isPending}
+                    onClick={() => updateStatus(shipment.id, "delayed")}
+                  >
+                    Delay
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={isPending}
+                    onClick={() => updateStatus(shipment.id, "delivered")}
+                  >
+                    Delivered
+                  </Button>
+                  <label className="text-xs text-muted-foreground">
+                    Proof type
+                    <select
+                      value={proofKind}
+                      onChange={(event) =>
+                        setProofKind(event.target.value as "photo" | "signature" | "document")
+                      }
+                      className="mt-1 h-8 rounded-md border border-input bg-background px-2 text-xs"
+                    >
+                      <option value="photo">Photo</option>
+                      <option value="signature">Signature</option>
+                      <option value="document">Document</option>
+                    </select>
+                  </label>
+                  <label className="text-xs text-muted-foreground">
+                    Upload files
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/*,application/pdf"
+                      className="mt-1 block w-full text-xs"
+                      onChange={(event) => {
+                        uploadProof(shipment.id, event.target.files);
+                        event.target.value = "";
+                      }}
+                      disabled={uploadingId === shipment.id}
+                    />
+                  </label>
+                  {uploadingId === shipment.id && (
+                    <span className="text-xs text-muted-foreground">Uploading…</span>
+                  )}
+                </div>
+                {shipment.proofs && shipment.proofs.length > 0 ? (
+                  <div className="mt-3 space-y-2 rounded-md border border-dashed border-border/70 bg-background/60 p-3 text-xs text-muted-foreground">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-foreground">
+                      Proof assets
+                    </p>
+                    {shipment.proofs.map((proof) => (
+                      <div key={proof.id} className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-2">
+                          <Badge variant={proof.kind === "signature" ? "warning" : "info"}>
+                            {proof.kind}
+                          </Badge>
+                          {new Date(proof.uploadedAt).toLocaleString()}
+                        </span>
+                        <span className="truncate text-muted-foreground/80">{proof.assetKey}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ))}
           </TooltipProvider>
